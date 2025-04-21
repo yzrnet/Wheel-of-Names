@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <title>Wheel of Names - Popup</title>
+  <!-- Vue.js (CDN) – hier Vue 3 als Beispiel -->
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+  <style>
+    /* --- Grund-Layout für Body --- */
+    body {
+      margin: 0;
+      font-family: sans-serif;
+      display: flex;
+      flex-direction: row;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* --- App-Container (alles) --- */
+    .app-container {
+      display: flex;
+      width: 100%;
+      align-items: flex-start; 
+    }
+
+    /* --- Linke Seite: Wheel --- */
+    .wheel-container {
+      flex: 1;               
+      position: relative;
+      text-align: center;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      padding: 10px;
+      box-sizing: border-box;
+    }
+    .canvas-wrapper {
+      position: relative; 
+      display: inline-block;
+      width: auto; 
+      height: auto; 
+    }
+    .canvas-wrapper canvas {
+      display: block;
+      margin: 0 auto;
+      max-width: 95%;
+      max-height: 95%;
+      aspect-ratio: 1/1;
+    }
+    .canvas-wrapper .arrow {
+      position: absolute;
+      right: 0; 
+      top: 50%;
+      transform: translateY(-50%);
+      width: 0;
+      height: 0;
+      border-right: 60px solid darkgrey; /* Pfeil-Dreieck */
+      border-top: 20px solid transparent;
+      border-bottom: 20px solid transparent;
+    }
+
+    /* --- Rechte Seite: Buttons & TextArea --- */
+    .controls-container {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      width: 20%;
+      min-width: 350px;
+      max-width: 500px;
+      margin: 20px; 
+      height: 90%; 
+      box-sizing: border-box;
+    }
+    .textarea-container {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+    .textarea-container textarea {
+      width: 90%;
+      height: 90%;
+      resize: none;
+      font-family: inherit;
+      font-size: 14px;
+      padding: 8px;
+      box-sizing: border-box;
+    }
+    .buttons {
+      margin-bottom: 10px;
+    }
+    button {
+      margin-right: 5px;
+      padding: 6px 12px;
+      cursor: pointer;
+    }
+
+    /* --- Modal (Popup) Overlay --- */
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background-color: rgba(0, 0, 0, 0.6);
+      display: flex;
+      justify-content: center; 
+      align-items: center;     
+      z-index: 9999;           
+    }
+    .modal-content {
+      background: #fff;
+      border-radius: 8px;
+      font-weight: bold;
+      font-size: large;
+      max-width: 500px;
+      width: 80%;    
+      padding: 20px;
+      text-align: center;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+    }
+  </style>
+</head>
+<body>
+  <div id="app" class="app-container">
+    <!-- LINKER BEREICH: Wheel -->
+    <div class="wheel-container">
+      <div class="canvas-wrapper">
+        <canvas 
+          ref="wheelCanvas" 
+          :width="canvasSize" 
+          :height="canvasSize" 
+          @click="spinWheel"
+        ></canvas>
+        <div class="arrow"></div>
+      </div>
+    </div>
+
+    <!-- RECHTER BEREICH: Buttons + TextArea -->
+    <div class="controls-container">
+      <div class="buttons">
+        <button @click="clearNames">Löschen</button>
+        <button @click="sortNames">Sortieren ({{ sortDirectionLabel }})</button>
+        <button @click="shuffleNames">Zufällig mischen</button>
+      </div>
+      <div class="textarea-container">
+        <label for="namelist"><strong>Namen (jeweils in neuer Zeile):</strong></label>
+        <textarea
+          id="namelist"
+          v-model="nameListText"
+          placeholder="Pro Zeile ein Name..."
+        ></textarea>
+      </div>
+    </div>
+
+    <!-- MODAL nur sichtbar, wenn showWinnerModal = true -->
+    <div v-if="showWinnerModal" class="modal-overlay">
+      <div class="modal-content">
+        <p>Es gibt einen Gewinner!</p>
+        <h2>{{ winnerName }}</h2>
+        <button @click="closeModal">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Vue-Logik -->
+  <script>
+    const { createApp, ref, computed, watch, onMounted } = Vue;
+
+    createApp({
+      setup() {
+        // Namen
+        const nameListText = ref(
+          "Chef\nBrummbär\nHappy\nSchlafmütze\nPimpel\nHatschi\nSeppl\nSchneewittchen"
+        );
+        const sortAscending = ref(true);
+
+        // Popup
+        const winnerName = ref("");
+        const showWinnerModal = ref(false);
+
+        // Canvas
+        const canvasSize = ref(600);
+        const wheelCanvas = ref(null);
+
+        // Spinning
+        let isSpinning = false;
+        let currentRotation = 0;
+
+        // Farben
+        const colorsForSegments = ref([]);
+
+        // ---------------------------------------
+        // Hilfsfunktionen
+        // ---------------------------------------
+        function closeModal() {
+          showWinnerModal.value = false;
+        }
+
+        // z.B. zyklische 4-Farben-Liste
+        function generateColorPattern(n) {
+          const cycle = ["blue", "red", "yellow", "green"];
+          const half = cycle.length / 2;
+          const result = [];
+          const r = n % 4;
+          if (r === 1) {
+            result.push(cycle[half]);
+            let idx = 0;
+            while (result.length < n) {
+              result.push(cycle[idx]);
+              idx = (idx + 1) % cycle.length;
+            }
+          } else if (r === 2) {
+            result.push(cycle[half-1]);
+            result.push(cycle[half]);
+            let idx = 0;
+            while (result.length < n) {
+              result.push(cycle[idx]);
+              idx = (idx + 1) % cycle.length;
+            }
+          } else {
+            let idx = 0;
+            while (result.length < n) {
+              result.push(cycle[idx]);
+              idx = (idx + 1) % cycle.length;
+            }
+          }
+          return result;
+        }
+
+        // ---------------------------------------
+        // Computed
+        // ---------------------------------------
+        const names = computed(() => {
+          return nameListText.value
+            .split("\n")
+            .map(n => n.trim())
+            .filter(n => n.length > 0);
+        });
+        const sortDirectionLabel = computed(() => {
+          return sortAscending.value ? "A->Z" : "Z->A";
+        });
+
+        // ---------------------------------------
+        // Zeichen-Funktion
+        // ---------------------------------------
+        function drawWheel() {
+          if (!wheelCanvas.value) return;
+          const ctx = wheelCanvas.value.getContext("2d");
+          const cx = canvasSize.value / 2;
+          const cy = canvasSize.value / 2;
+          const radius = canvasSize.value / 2;
+
+          // Leeren
+          ctx.clearRect(0, 0, canvasSize.value, canvasSize.value);
+
+          const total = names.value.length;
+          if (total === 0) return;
+
+          const anglePerSegment = (2 * Math.PI) / total;
+
+          // Segmente zeichnen
+          for (let i = 0; i < total; i++) {
+            const startAngle = i * anglePerSegment + (currentRotation * Math.PI) / 180;
+            const endAngle = startAngle + anglePerSegment;
+            const color = colorsForSegments.value[i];
+
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            ctx.arc(cx, cy, radius, startAngle, endAngle);
+            ctx.fillStyle = color;
+            ctx.fill();
+            ctx.closePath();
+          }
+
+          // Innenkreis (helle Fläche)
+          ctx.beginPath();
+          ctx.arc(cx, cy, radius * 0.15, 0, 2 * Math.PI);
+          ctx.fillStyle = "white";
+          ctx.fill();
+          ctx.closePath();
+
+          // Text "Klick mich" in der Mitte
+          ctx.fillStyle = "black";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          // Schriftgröße an den Innenkreis anpassen (z.B. 0.15 * radius * 0.6)
+          const centerFontSize = Math.floor(radius * 0.15 * 0.6);
+          ctx.font = `bold ${centerFontSize}px sans-serif`;
+          ctx.fillText("Klick", cx, cy);
+
+          // Namen in den Segmenten
+          for (let i = 0; i < total; i++) {
+            const midAngle = i * anglePerSegment 
+              + anglePerSegment / 2 
+              + (currentRotation * Math.PI) / 180;
+
+            const textRadius = radius * 0.6;
+            const x = cx + Math.cos(midAngle) * textRadius;
+            const y = cy + Math.sin(midAngle) * textRadius;
+
+            ctx.save();
+            ctx.translate(x, y);
+            // Damit der Text lesbar bleibt, drehen wir ihn so, dass er horizontal ausgerichtet ist
+            ctx.rotate(midAngle);
+            // Dynamische Schriftgröße berechnen:
+            // Wir setzen die Schriftgröße proportional zum Winkelanteil (z.B. 40px entspricht einem vollen Segment von 360°)
+            
+            //ctx.font = `bold ${fontSize}px sans-serif`;
+            ctx.fillStyle = "black";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            // Optional: Ausgabe des Namens plus Winkel (kann nach Bedarf entfernt werden)
+            //ctx.fillText(names.value[i] + " (" + Math.floor(i * (360/total)) + "°)", 0, 0);
+            ctx.fillText(names.value[i], 0, 0);
+            ctx.restore();
+          }
+        }
+
+        // ---------------------------------------
+        // Spin-Logik
+        // ---------------------------------------
+        function spinWheel() {
+          if (isSpinning || names.value.length === 0) return;
+          isSpinning = true;
+          winnerName.value = "";
+          showWinnerModal.value = false;
+
+          // Zeitphase 1: 1s Beschleunigung
+          const phase1 = 1000;
+
+          // Zeitphase 2: ZUFÄLLIG zw. 1-3s Max-Speed
+          const randomPhase2 = 1000 + Math.random() * 1000 + Math.random() * 1000; 
+          // => 2000..3000 ms
+
+          // Zeitphase 3: 1s Abbremsen
+          const phase3 = 1000;
+
+          const totalDuration = phase1 + randomPhase2 + phase3;
+
+          // Wir rechnen mit ~3 Umdr./Sek = 1080 Grad/Sek
+          const maxSpeed = 0.4;
+          let startTime = null;
+          let previousTimestamp = 0;
+
+          function animate(timestamp) {
+            if (!startTime) {
+              startTime = timestamp;
+              previousTimestamp = timestamp;
+            }
+            const elapsed = timestamp - startTime;
+            const deltaTime = timestamp - previousTimestamp;
+            previousTimestamp = timestamp;
+
+            if (elapsed < phase1) {
+              // Phase 1: Beschleunigen (0..maxSpeed)
+              const progress = elapsed / phase1;
+              const currentSpeed = maxSpeed * progress;
+              currentRotation += currentSpeed * deltaTime;
+            } else if (elapsed < phase1 + randomPhase2) {
+              // Phase 2: Max-Speed
+              currentRotation += maxSpeed * deltaTime;
+            } else if (elapsed < totalDuration) {
+              // Phase 3: Abbremsen
+              const slowElapsed = elapsed - (phase1 + randomPhase2);
+              const slowDuration = phase3;
+              const progress = slowElapsed / slowDuration;
+              const currentSpeed = maxSpeed * (1 - progress);
+              currentRotation += currentSpeed * deltaTime;
+            } else {
+              // Fertig
+              // 1) Letztes Zeichnen
+              drawWheel();
+
+              const totalSegments = names.value.length;
+              const anglePerSegmentDeg = 360 / totalSegments;
+              const index = Math.floor((360-currentRotation) / anglePerSegmentDeg);
+
+              winnerName.value = names.value[index] + "";
+              isSpinning = false;
+              showWinnerModal.value = true;
+              return;
+            }
+
+            // Rotation in [0..360)
+            currentRotation = currentRotation % 360;
+            drawWheel();
+            requestAnimationFrame(animate);
+          }
+
+          requestAnimationFrame(animate);
+        }
+
+        // ---------------------------------------
+        // Methoden
+        // ---------------------------------------
+        function clearNames() {
+          nameListText.value = "";
+        }
+        function sortNames() {
+          const arr = names.value.slice();
+          if (sortAscending.value) {
+            arr.sort((a, b) => a.localeCompare(b, "de", { sensitivity: "base" }));
+          } else {
+            arr.sort((a, b) => b.localeCompare(a, "de", { sensitivity: "base" }));
+          }
+          sortAscending.value = !sortAscending.value;
+          nameListText.value = arr.join("\n");
+        }
+        function shuffleNames() {
+          const arr = names.value.slice();
+          for (let i = arr.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [arr[i], arr[j]] = [arr[j], arr[i]];
+          }
+          nameListText.value = arr.join("\n");
+        }
+
+        // ---------------------------------------
+        // Reaktionen auf Änderungen
+        // ---------------------------------------
+        watch(names, () => {
+          winnerName.value = "";
+          currentRotation = 0;
+          colorsForSegments.value = generateColorPattern(names.value.length);
+          drawWheel();
+        });
+
+        onMounted(() => {
+          colorsForSegments.value = generateColorPattern(names.value.length);
+          drawWheel();
+        });
+
+        // ---------------------------------------
+        // Rückgabe
+        // ---------------------------------------
+        return {
+          nameListText,
+          sortAscending,
+          winnerName,
+          showWinnerModal,
+          canvasSize,
+          wheelCanvas,
+
+          names,
+          sortDirectionLabel,
+
+          clearNames,
+          sortNames,
+          shuffleNames,
+          closeModal,
+
+          spinWheel
+        };
+      }
+    }).mount("#app");
+  </script>
+</body>
+</html>
